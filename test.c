@@ -61,7 +61,7 @@ update_obj(struct aoi_space *space, uint32_t id) {
 			OBJ[id].pos[i]-=100.0f;
 		}
 	}
-	aoi_update(space, id, OBJ[id].mode, OBJ[id].pos);
+	aoi_update(space, id, OBJ[id].mode, OBJ[id].pos,10);
 }
 
 static void
@@ -86,7 +86,7 @@ test(struct aoi_space * space) {
 				update_obj(space,j);
 			}
 		} else if (i==50) {
-			aoi_update(space, 3, "d", OBJ[3].pos);
+			aoi_update(space, 3, "d", OBJ[3].pos,10);
 		} else {
 			for (j=0;j<3;j++) {
 				update_obj(space,j);
@@ -99,7 +99,7 @@ test(struct aoi_space * space) {
 int
 main() {
 	struct alloc_cookie cookie = { 0,0,0 };
-	struct aoi_space * space = aoi_create(my_alloc , &cookie);
+	struct aoi_space * space = aoi_create(my_alloc , &cookie,10);
 
 	test(space);
 

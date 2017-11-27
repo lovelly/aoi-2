@@ -5,7 +5,6 @@
 #include <assert.h>
 #include <stdlib.h>
 #include "aoi.h"
-#include "skynet_malloc.h"
 
 #define AOI_RADIS 10.0f
 
@@ -534,10 +533,10 @@ aoi_message(struct aoi_space *space, aoi_Callback cb, void *ud) {
 static void *
 default_alloc(void * ud, void *ptr, size_t sz) {
 	if (ptr == NULL) {
-		void *p = skynet_malloc(sz);
+		void *p = malloc(sz);
 		return p;
 	}
-	skynet_free(ptr);
+	free(ptr);
 	return NULL;
 }
 

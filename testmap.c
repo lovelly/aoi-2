@@ -98,7 +98,7 @@ int
 main()
 {
 	struct alloc_cookie cookie = { 0,0,0 };
-	SPACE = aoi_create(my_alloc , &cookie);
+	SPACE = aoi_create(my_alloc , &cookie,10);
 
 	struct map * m = map_new(SPACE);
 
