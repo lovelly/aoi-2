@@ -5,6 +5,7 @@
 #include <assert.h>
 #include <stdlib.h>
 #include "aoi.h"
+#include "skynet_malloc.h"
 
 #define AOI_RADIS 10.0f
 
@@ -22,8 +23,9 @@ struct object {
 	uint32_t id;
 	int version;
 	int mode;
-	float last[3];
-	float position[3];
+	float last[3];//上次记录坐标
+	float position[3];//
+	float radis2;
 };
 
 struct object_set {
@@ -32,10 +34,11 @@ struct object_set {
 	struct object ** slot;
 };
 
+//热点对
 struct pair_list {
 	struct pair_list * next;
-	struct object * watcher;
-	struct object * marker;
+	struct object * watcher;//观察者 Watcher
+	struct object * marker;//被观察者 Marker
 	int watcher_version;
 	int marker_version;
 };
@@ -49,7 +52,7 @@ struct map_slot {
 struct map {
 	int size;
 	int lastfree;
-	struct map_slot * slot;
+	struct map_slot * slot;//数组
 };
 
 struct aoi_space {
@@ -61,8 +64,10 @@ struct aoi_space {
 	struct object_set * watcher_move;
 	struct object_set * marker_move;
 	struct pair_list * hot;
+	float radis2;
 };
 
+//创建活物
 static struct object *
 new_object(struct aoi_space * space, uint32_t id) {
 	struct object * obj = space->alloc(space->alloc_ud, NULL, sizeof(*obj));
@@ -73,23 +78,26 @@ new_object(struct aoi_space * space, uint32_t id) {
 	return obj;
 }
 
+//取id对应的slot
 static inline struct map_slot *
 mainposition(struct map *m , uint32_t id) {
-	uint32_t hash = id & (m->size-1);
+	uint32_t hash = id & (m->size-1);//id % (m->size-1)
 	return &m->slot[hash];
 }
 
 static void rehash(struct aoi_space * space, struct map *m);
 
+//插入活物
 static void
 map_insert(struct aoi_space * space , struct map * m, uint32_t id , struct object *obj) {
 	struct map_slot *s = mainposition(m,id);
-	if (s->id == INVALID_ID) {
+	if (s->id == INVALID_ID) {//如果slot为空
 		s->id = id;
 		s->obj = obj;
 		return;
 	}
-	if (mainposition(m, s->id) != s) {
+	//slot被占了
+	if (mainposition(m, s->id) != s) {//当前占有格子的活物hash并非此格，则进行替换
 		struct map_slot * last = mainposition(m,s->id);
 		while (last->next != s - m->slot) {
 			assert(last->next >= 0);
@@ -106,13 +114,13 @@ map_insert(struct aoi_space * space , struct map * m, uint32_t id , struct objec
 		}
 		return;
 	}
-	while (m->lastfree >= 0) {
+	while (m->lastfree >= 0) {//当前占有此格的活物hash相同，则找个空闲格子插入，并将next指向新活物
 		struct map_slot * temp = &m->slot[m->lastfree--];
 		if (temp->id == INVALID_ID) {
 			temp->id = id;
 			temp->obj = obj;
 			temp->next = s->next;
-			s->next = (int)(temp - m->slot);
+			s->next = (int)(temp - m->slot);//因为是连续数组  所以这里会取到temp在m->slot的位置
 			return;
 		}
 	}
@@ -120,6 +128,7 @@ map_insert(struct aoi_space * space , struct map * m, uint32_t id , struct objec
 	map_insert(space, m, id , obj);
 }
 
+//扩大双倍slot
 static void
 rehash(struct aoi_space * space, struct map *m) {
 	struct map_slot * old_slot = m->slot;
@@ -143,6 +152,7 @@ rehash(struct aoi_space * space, struct map *m) {
 	space->alloc(space->alloc_ud, old_slot, old_size * sizeof(struct map_slot));
 }
 
+//查找活物
 static struct object *
 map_query(struct aoi_space *space, struct map * m, uint32_t id) {
 	struct map_slot *s = mainposition(m, id);
@@ -242,7 +252,7 @@ set_new(struct aoi_space * space) {
 }
 
 struct aoi_space * 
-aoi_create(aoi_Alloc alloc, void *ud) {
+aoi_create(aoi_Alloc alloc, void *ud, float radis) {
 	struct aoi_space *space = alloc(ud, NULL, sizeof(*space));
 	space->alloc = alloc;
 	space->alloc_ud = ud;
@@ -252,6 +262,7 @@ aoi_create(aoi_Alloc alloc, void *ud) {
 	space->watcher_move = set_new(space);
 	space->marker_move = set_new(space);
 	space->hot = NULL;
+	space->radis2 = radis * radis;
 	return space;
 }
 
@@ -330,8 +341,8 @@ change_mode(struct object * obj, bool set_watcher, bool set_marker) {
 }
 
 inline static bool
-is_near(float p1[3], float p2[3]) {
-	return DIST2(p1,p2) < AOI_RADIS2 * 0.25f ;
+is_near(float p1[3], float p2[3], float raids2) {
+	return DIST2(p1, p2) < raids2 * 0.25f;
 }
 
 inline static float
@@ -340,8 +351,10 @@ dist2(struct object *p1, struct object *p2) {
 	return d;
 }
 
+//在 aoi_update 函数中，新的 id 一定被加入 move new 集合。需要删除 (drop) 的 id 则简单打上 drop 标记。以前提到过的 id ，则查询更新的坐标和旧坐标的距离，
+//更新其状态。如果有状态较之以前有改变，则分别置入 shift new 或 move new 集合。否则什么也不做。
 void
-aoi_update(struct aoi_space * space , uint32_t id, const char * modestring , float pos[3]) {
+aoi_update(struct aoi_space * space , uint32_t id, const char * modestring , float pos[3], float radis) {
 	struct object * obj = map_query(space, space->object,id);
 	int i;
 	bool set_watcher = false;
@@ -361,10 +374,11 @@ aoi_update(struct aoi_space * space , uint32_t id, const char * modestring , flo
 				obj->mode = MODE_DROP;
 				drop_object(space, obj);
 			}
-			return;
+			return;//
 		}
 	}
 
+	//上面如果有设置drop已经return了，所以这里是取消活物drop状态
 	if (obj->mode & MODE_DROP) {
 		obj->mode &= ~MODE_DROP;
 		grab_object(obj);
@@ -372,13 +386,19 @@ aoi_update(struct aoi_space * space , uint32_t id, const char * modestring , flo
 
 	bool changed = change_mode(obj, set_watcher, set_marker);
 
+	float radis2 = radis * radis;
+	if (obj->radis2 != radis2) {
+		obj->radis2 = radis2;
+		changed = true;
+	}
+
 	copy_position(obj->position, pos);
-	if (changed || !is_near(pos, obj->last)) {
+	if (changed || !is_near(pos, obj->last, obj->radis2)) {
 		// new object or change object mode
 		// or position changed
 		copy_position(obj->last , pos);
-		obj->mode |= MODE_MOVE;
-		++obj->version;
+		obj->mode |= MODE_MOVE;//设置活物为移动
+		++obj->version;//记录是否有改变
 	} 
 }
 
@@ -389,12 +409,15 @@ drop_pair(struct aoi_space * space, struct pair_list *p) {
 	space->alloc(space->alloc_ud, p, sizeof(*p));
 }
 
+//刷新热点对
 static void
 flush_pair(struct aoi_space * space, aoi_Callback cb, void *ud) {
 	struct pair_list **last = &(space->hot);
 	struct pair_list *p = *last;
 	while (p) {
 		struct pair_list *next = p->next;
+		//比较它们和上个 tick 处理时，对象状态是否发生了改变。只要至少有一个对象对象发生了改变，就将这个热点对抛弃。（因为一定有新的正确关联这两个对象的热点对在这个列表中）
+		//打上删除标记的也直接抛弃
 		if (p->watcher->version != p->watcher_version ||
 			p->marker->version != p->marker_version ||
 			(p->watcher->mode & MODE_DROP) ||
@@ -403,13 +426,14 @@ flush_pair(struct aoi_space * space, aoi_Callback cb, void *ud) {
 			drop_pair(space, p);
 			*last = next;
 		} else {
-			float distance2 = dist2(p->watcher , p->marker);
-			if (distance2 > AOI_RADIS2 * 4) {
-				drop_pair(space,p);
+			//对于其他有效的热点对，我们比较其中两个对象的距离，当距离小于 AOI 半径时，发送 AOI 消息，并把自己从列表中删除；否则保留在列表中等待下个 tick 处理。
+			float distance2 = dist2(p->watcher, p->marker);
+			if (distance2 > p->watcher->radis2 * 4) {
+				drop_pair(space, p);
 				*last = next;
-			} else if (distance2 < AOI_RADIS2) {
+			} else if (distance2 < p->watcher->radis2) {
 				cb(ud, p->watcher->id, p->marker->id);
-				drop_pair(space,p);
+				drop_pair(space, p);
 				*last = next;
 			} else {
 				last = &(p->next);
@@ -433,6 +457,7 @@ set_push_back(struct aoi_space * space, struct object_set * set, struct object *
 	++set->number;
 }
 
+//将活物置入对应的集合里
 static void
 set_push(void * s, struct object * obj) {
 	struct aoi_space * space = s;
@@ -461,13 +486,14 @@ gen_pair(struct aoi_space * space, struct object * watcher, struct object * mark
 		return;
 	}
 	float distance2 = dist2(watcher, marker);
-	if (distance2 < AOI_RADIS2) {
+	if (distance2 < watcher->radis2) {
 		cb(ud, watcher->id, marker->id);
 		return;
 	}
-	if (distance2 > AOI_RADIS2 * 4) {
+	if (distance2 > watcher->radis2 * 4) {
 		return;
 	}
+	//加入热点对
 	struct pair_list * p = space->alloc(space->alloc_ud, NULL, sizeof(*p));
 	p->watcher = watcher;
 	grab_object(watcher);
@@ -489,6 +515,7 @@ gen_pair_list(struct aoi_space *space, struct object_set * watcher, struct objec
 	}
 }
 
+//使用时，定期调用 aoi_message 函数。每次调用称为一个 tick 。在这个 tick 里，会把发生的 AOI 事件以回调函数的形式发出来。
 void 
 aoi_message(struct aoi_space *space, aoi_Callback cb, void *ud) {
 	flush_pair(space,  cb, ud);
@@ -497,6 +524,8 @@ aoi_message(struct aoi_space *space, aoi_Callback cb, void *ud) {
 	space->marker_static->number = 0;
 	space->marker_move->number = 0;
 	map_foreach(space->object, set_push , space);	
+
+	//包含有至少一个运动对象的对象对 进行热点判断
 	gen_pair_list(space, space->watcher_static, space->marker_move, cb, ud);
 	gen_pair_list(space, space->watcher_move, space->marker_static, cb, ud);
 	gen_pair_list(space, space->watcher_move, space->marker_move, cb, ud);
@@ -505,14 +534,14 @@ aoi_message(struct aoi_space *space, aoi_Callback cb, void *ud) {
 static void *
 default_alloc(void * ud, void *ptr, size_t sz) {
 	if (ptr == NULL) {
-		void *p = malloc(sz);
+		void *p = skynet_malloc(sz);
 		return p;
 	}
-	free(ptr);
+	skynet_free(ptr);
 	return NULL;
 }
 
 struct aoi_space * 
-aoi_new() {
-	return aoi_create(default_alloc, NULL);
+aoi_new(float raids) {
+	return aoi_create(default_alloc, NULL, raids);
 }
