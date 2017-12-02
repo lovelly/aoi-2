@@ -408,12 +408,16 @@ drop_pair(struct aoi_space * space, struct pair_list *p) {
 	space->alloc(space->alloc_ud, p, sizeof(*p));
 }
 
+static int cnt = 0;
+
 //刷新热点对
 static void
 flush_pair(struct aoi_space * space, aoi_Callback cb, void *ud) {
-	struct pair_list **last = &(space->hot);
+	struct pair_list **last = &(space->hot); //last 的值是head的地址  head == pair_list 地址
 	struct pair_list *p = *last;
+	cnt++;
 	while (p) {
+		int b = cnt;
 		struct pair_list *next = p->next;
 		//比较它们和上个 tick 处理时，对象状态是否发生了改变。只要至少有一个对象对象发生了改变，就将这个热点对抛弃。（因为一定有新的正确关联这两个对象的热点对在这个列表中）
 		//打上删除标记的也直接抛弃

@@ -97,7 +97,7 @@ test(struct aoi_space * space) {
 }
 
 int
-main() {
+main1() {
 	struct alloc_cookie cookie = { 0,0,0 };
 	struct aoi_space * space = aoi_create(my_alloc , &cookie,10);
 
@@ -108,3 +108,33 @@ main() {
 	return 0;
 }
 
+
+void message1(void* ud, uint32_t watcher, uint32_t marker) {
+	printf("watcher: %d, marker:%d \n", watcher, marker);
+}
+
+void updae_obj(struct aoi_space *space) {
+	float pos[3];
+	pos[0] = 1;
+	pos[1] = 2;
+	pos[2] = 3;
+	aoi_update(space, 0, "w",  pos, 100);
+	aoi_update(space, 1, "wm", pos, 100);
+	aoi_update(space, 2, "wm", pos, 100);
+	pos[0] = 100;
+	pos[1] = 200;
+	pos[2] = 300;
+	aoi_update(space, 3, "wm", pos, 100);
+	aoi_message(space, message1, NULL);
+	pos[0] = 2;
+	pos[1] = 3;
+	pos[2] = 4;
+	aoi_update(space, 3, "w", pos, 100);
+	printf("---------------------------------------\n");
+	aoi_message(space, message1, NULL);
+}
+
+int main() {
+	struct aoi_space * space = aoi_new(10);
+	updae_obj(space);
+}
